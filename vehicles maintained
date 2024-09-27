@@ -1,0 +1,148 @@
+ <?php
+$servername = "localhost"; // Replace with your server name
+$username = "root"; // Replace with your username
+$password = ""; // Replace with your password
+$dbname = "view_more";
+
+// Create connection
+$conn = new mysqli($servername, $username, $password, $dbname);
+
+// Check connection
+if ($conn->connect_error) {
+    print "Unable to connect sorry unable to load db";
+    die("Connection failed: " . $conn->connect_error);
+}
+
+// Fetch summary data
+$summary_query = "SELECT
+                    SUM(item_cost + labour_cost) AS total_maintenance_amount,
+                    COUNT(DISTINCT vehicle_no) AS num_vehicles_maintained,
+                    SUM(item_cost) AS used_stock_value,
+                    SUM(quantity) AS stock_units_used
+                  FROM maintenance_done";
+$summary_result = $conn->query($summary_query);
+$summary_data = $summary_result->fetch_assoc();
+
+// Fetch maintenance data
+$maintenance_query = "SELECT
+                        md.vehicle_no,
+                        md.vname AS vehicle_name,
+                        MAX(md.maintenance_date) AS last_service_date,
+                        MAX(CASE 
+                            WHEN se.item_category = 'Engine Oil' OR md.maintenance_details = 'Engine Oil' THEN md.maintenance_date
+                            ELSE NULL
+                        END) AS last_oil_change_date,
+                        DATEDIFF(CURDATE(), MAX(CASE 
+                            WHEN se.item_category = 'Engine Oil' OR md.maintenance_details = 'Engine Oil' THEN md.maintenance_date
+                            ELSE NULL
+                        END)) AS days_since_oil_changed,
+                        DATEDIFF(CURDATE(), MAX(md.maintenance_date)) AS days_since_last_service,
+                        COALESCE(AVG(DATEDIFF(next_change.maintenance_date, md.maintenance_date)), 0) AS avg_days_between_oil_changes,
+                        DATE_ADD(MAX(md.maintenance_date), INTERVAL COALESCE(AVG(DATEDIFF(next_change.maintenance_date, md.maintenance_date)), 0) DAY) AS recommended_oil_change_date,
+                        'High' AS priority,
+                        t.customer_name,
+                        t.customer_mobile,
+                        MAX(CASE 
+                            WHEN se.item_name IN ('Kharad', 'Wall', 'Timing chain', 'Wall seal', 'Half kit', 'Piston 50', 'Piston 100', 'Piston 25', 'Piston 75') THEN md.maintenance_date
+                            ELSE NULL
+                        END) AS last_engine_change_date
+                      FROM maintenance_done md
+                      JOIN stock_entry se ON md.item_id = se.sku_id
+                      LEFT JOIN maintenance_done next_change ON md.vehicle_no = next_change.vehicle_no
+                        AND next_change.maintenance_date > md.maintenance_date
+                      LEFT JOIN trip t ON md.vehicle_no = t.bikes_id
+                      GROUP BY md.vehicle_no, md.vname, t.customer_name, t.customer_mobile";
+$maintenance_result = $conn->query($maintenance_query);
+
+$conn->close();
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Maintenance Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px; }
+        .dashboard { max-width: 1500px; margin: 0 auto; background: white; padding: 20px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
+        .summary-cards { display: flex; justify-content: space-between; margin-bottom: 20px; }
+        .card { background-color: #000; color: #fff; padding: 20px; text-align: center; border-radius: 8px; flex: 1; margin-right: 10px; }
+        .card:last-child { margin-right: 0; }
+        .search-bar { display: flex; flex-direction: column; align-items: center; margin-bottom: 20px; }
+        .search-bar input { padding: 10px; width: 45%; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 10px; }
+        .search-bar button { padding: 10px 20px; background-color: #f0ad4e; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        table { width: 100%; border-collapse: collapse; }
+        table, th, td { border: 1px solid #ddd; }
+        th, td { padding: 15px; text-align: left; }
+        th { background-color: #f4f4f4; }
+        .whatsapp-btn { padding: 10px 15px; background-color: #25D366; color: white; border: none; border-radius: 4px; cursor: pointer; text-decoration: none; }
+        .pagination { text-align: center; margin-top: 20px; }
+        .pagination a { padding: 10px 15px; margin: 0 5px; text-decoration: none; background-color: #f0ad4e; color: white; border-radius: 4px; }
+        .pagination a.active { background-color: #5cb85c; }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+         <!-- Date Filter Form -->
+         <div class="search-bar">
+            <form method="get" action="">
+                <input type="date" name="date_filter">
+                <button type="submit">Search</button>
+            </form>
+        </div>
+        
+        <div class="summary-cards">
+            <div class="card"><p>Total maintenance amount</p><h3><?php echo number_format($summary_data['total_maintenance_amount']); ?></h3></div>
+            <div class="card"><p>No. of vehicles maintained</p><h3><?php echo $summary_data['num_vehicles_maintained']; ?></h3></div>
+            <div class="card"><p>Used stock value</p><h3>Rs. <?php echo number_format($summary_data['used_stock_value']); ?></h3></div>
+            <div class="card"><p>Stock units used</p><h3><?php echo $summary_data['stock_units_used']; ?></h3></div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Vehicle Number</th>
+                    <th>Vehicle Name</th>
+                    <th>Last Oil Change Date</th>
+                    <th>Days Since Oil Changed</th>
+                    <th>Avg Days Between Oil Changes</th>
+                    <th>Recommended Oil Change Date</th>
+                    <th>Last Engine Change Date</th>
+                    <th>Priority</th>
+                    <th>Customer Name</th>
+                    <th>Customer Mobile</th>
+                    <th>Contact</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php while($row = $maintenance_result->fetch_assoc()): ?>
+                <tr>
+                    <td><?php echo htmlspecialchars($row['vehicle_no']); ?></td>
+                    <td><?php echo htmlspecialchars($row['vehicle_name']); ?></td>
+                    <td><?php echo htmlspecialchars($row['last_oil_change_date']); ?></td>
+                    <td><?php echo htmlspecialchars($row['days_since_oil_changed']); ?></td>
+                    <td><?php echo htmlspecialchars($row['avg_days_between_oil_changes']); ?></td>
+                    <td><?php echo htmlspecialchars($row['recommended_oil_change_date']); ?></td>
+                    <td><?php echo htmlspecialchars($row['last_engine_change_date']); ?></td>
+                    <td><?php echo htmlspecialchars($row['priority']); ?></td>
+                    <td><?php echo htmlspecialchars($row['customer_name']); ?></td>
+                    <td><?php echo htmlspecialchars($row['customer_mobile']); ?></td>
+                    <td><a href="https://wa.me/<?php echo htmlspecialchars($row['customer_mobile']); ?>" class="whatsapp-btn" target="_blank">WhatsApp</a></td>
+                </tr>
+                <?php endwhile; ?>
+            </tbody>
+        </table>
+
+        <!-- Pagination controls -->
+        <div class="pagination">
+            <a href="?page=1">&laquo; Previous</a>
+            <a href="?page=1" class="active">1</a>
+            <a href="?page=2">2</a>
+            <a href="?page=3">3</a>
+            <!-- Add more page links as needed -->
+            <a href="?page=2">Next &raquo;</a>
+        </div>
+    </div>
+</body>
+</html>
