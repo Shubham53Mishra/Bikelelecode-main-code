@@ -56,6 +56,7 @@ $maintenance_result = $conn->query($maintenance_query);
 $conn->close();
 ?>
 
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -67,12 +68,13 @@ $conn->close();
     <style>
         body { font-family: Arial, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px; }
         .dashboard { max-width: 1500px; margin: 0 auto; background: white; padding: 20px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
-        .summary-cards { display: flex; justify-content: space-between; margin-bottom: 20px; }
-        .card { background-color: #000; color: #fff; padding: 20px; text-align: center; border-radius: 8px; flex: 1; margin-right: 10px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .summary-cards { display: flex; justify-content: space-between; }
+        .card { background-color: #000; color: #fff; padding: 20px; text-align: center; border-radius: 8px; flex: 1; margin-right: 10px; width:300px; }
         .card:last-child { margin-right: 0; }
-        .search-bar { display: flex; flex-direction: column; align-items: center; margin-bottom: 20px; }
-        .search-bar input { padding: 10px; width: 45%; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 10px; }
-        .search-bar button { padding: 10px 20px; background-color: #f0ad4e; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .search-bar { display: flex; flex-direction: column; align-items: center; }
+        .search-bar input { padding: 10px; width: 100%; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 10px; }
+        .search-bar button { padding: 10px 20px; background-color: #f0ad4e; color: white; border: none; border-radius: 4px; cursor: pointer; width: 200px; }
         table { width: 100%; border-collapse: collapse; }
         table, th, td { border: 1px solid #ddd; }
         th, td { padding: 15px; text-align: left; }
@@ -81,24 +83,45 @@ $conn->close();
         .pagination { text-align: center; margin-top: 20px; }
         .pagination a { padding: 10px 15px; margin: 0 5px; text-decoration: none; background-color: #f0ad4e; color: white; border-radius: 4px; }
         .pagination a.active { background-color: #5cb85c; }
+        /* .search-bar input {
+    padding: 10px;
+    width: 50%;
+    border: 1px solid #ccc;
+    border-radius: 4px 0 0 4px;
+    margin-right: 0;
+}
+
+.search-bar button {
+    padding: 10px 20px;
+    background-color: #f0ad4e;
+    color: white;
+    border: none;
+    border-radius: 0 4px 4px 0;
+    cursor: pointer;
+}
+  */
+
     </style>
 </head>
 <body>
     <div class="dashboard">
-         <!-- Date Filter Form -->
-         <div class="search-bar">
-            <form method="get" action="">
-                <input type="date" name="date_filter">
-                <button type="submit">Search</button>
-            </form>
-        </div>
-        
-        <div class="summary-cards">
+        <div class="header">
+            <!-- Date Filter Form -->
+            <div class="search-bar">
+                <form method="get" action="">
+                    <input type="date" name="date_filter">
+                    <button type="submit">Search</button>
+                </form>
+            </div>
+            
+            <div class="summary-cards">
                 <div class="card"><p>Total maintenance amount</p><h3><?php echo number_format($summary_data['total_maintenance_amount']); ?></h3></div>
                 <div class="card"><p>No. of vehicles maintained</p><h3><?php echo $summary_data['num_vehicles_maintained']; ?></h3></div>
                 <div class="card"><p>Used stock value</p><h3>Rs. <?php echo number_format($summary_data['used_stock_value']); ?></h3></div>
                 <div class="card"><p>Stock units used</p><h3><?php echo $summary_data['stock_units_used']; ?></h3></div>
             </div>
+        </div>
+        
         <table>
             <thead>
                 <tr>
@@ -264,3 +287,4 @@ $conn->close();
         });
     </script>
 </body>
+</html>
