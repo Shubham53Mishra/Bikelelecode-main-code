@@ -1,4 +1,17 @@
-<?php
+ <?php
+session_start(); // Start the session at the very beginning
+
+include 'common/connection.php'; 
+// Ensure this is included after session_start()
+
+ob_start();
+if (!isset($_SESSION['email'])) {
+    header("location: login.php");
+}
+date_default_timezone_set("Asia/Kolkata");
+$vendor_email = $_SESSION['email'];
+date_default_timezone_set("Asia/Kolkata");
+
 $servername = "localhost"; // Replace with your server name
 $username = "root"; // Replace with your username
 $password = ""; // Replace with your password
@@ -13,6 +26,18 @@ if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
 }
 
+// Handle form submission for adding comments
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_comment'])) {
+    $vehicle_no = $_POST['vehicle_no'];
+    $comment = $_POST['comment'];
+    $customer_name = $_POST['customer_name'];
+
+    $stmt = $conn->prepare("INSERT INTO comments (vehicle_no, comment, customer_name) VALUES (?, ?, ?)");
+    $stmt->bind_param("sss", $vehicle_no, $comment, $customer_name);
+    $stmt->execute();
+    $stmt->close();
+}
+
 // Fetch summary data
 $summary_query = "SELECT
                     SUM(item_cost + labour_cost) AS total_maintenance_amount,
@@ -23,11 +48,12 @@ $summary_query = "SELECT
 $summary_result = $conn->query($summary_query);
 $summary_data = $summary_result->fetch_assoc();
 
-// Fetch maintenance data
+// Fetch maintenance data with date filter
+//$date_filter = isset($_GET['date_filter']) ? $_GET['date_filter'] : date('Y-m');
 $maintenance_query = "SELECT
                         md.vehicle_no,
                         md.vname AS vehicle_name,
-                        MAX(md.maintenance_date) AS last_service_date,
+                        md.maintenance_date AS last_service_date,
                         MAX(CASE 
                             WHEN se.item_category = 'Engine Oil' OR md.maintenance_details = 'Engine Oil' THEN md.maintenance_date
                             ELSE NULL
@@ -36,9 +62,10 @@ $maintenance_query = "SELECT
                             WHEN se.item_category = 'Engine Oil' OR md.maintenance_details = 'Engine Oil' THEN md.maintenance_date
                             ELSE NULL
                         END)) AS days_since_oil_changed,
-                        DATEDIFF(CURDATE(), MAX(md.maintenance_date)) AS days_since_last_service,
+                        DATEDIFF(CURDATE(), md.maintenance_date) AS days_since_last_service,
                         COALESCE(AVG(DATEDIFF(next_change.maintenance_date, md.maintenance_date)), 0) AS avg_days_between_oil_changes,
-                        DATE_ADD(MAX(md.maintenance_date), INTERVAL COALESCE(AVG(DATEDIFF(next_change.maintenance_date, md.maintenance_date)), 0) DAY) AS recommended_oil_change_date,
+                        DATE_ADD(md.maintenance_date, INTERVAL COALESCE(AVG(DATEDIFF(next_change.maintenance_date, md.maintenance_date)), 0) DAY) AS recommended_oil_change_date,
+                        'High' AS priority,
                         t.customer_name,
                         t.customer_mobile,
                         MAX(CASE 
@@ -50,12 +77,47 @@ $maintenance_query = "SELECT
                       LEFT JOIN maintenance_done next_change ON md.vehicle_no = next_change.vehicle_no
                         AND next_change.maintenance_date > md.maintenance_date
                       LEFT JOIN trip t ON md.vehicle_no = t.bikes_id
+                      WHERE md.maintenance_date = (
+                          SELECT MAX(maintenance_date)
+                          FROM maintenance_done
+                          WHERE vehicle_no = md.vehicle_no
+                      )
+                      AND t.pickup_date <= CURDATE() 
+                      AND t.drop_date >= CURDATE()
+                      AND t.admin_status != 'cancelled'
+                      AND DATE_FORMAT(md.maintenance_date, '%Y-%m') = ?
                       GROUP BY md.vehicle_no, md.vname, t.customer_name, t.customer_mobile";
-$maintenance_result = $conn->query($maintenance_query);
+$stmt = $conn->prepare($maintenance_query);
+$stmt->bind_param("s", $date_filter);
+$stmt->execute();
+$maintenance_result = $stmt->get_result();
+
+if (!$maintenance_result) {
+    die("Query failed: " . $conn->error);
+}
+
+// Fetch comments for a specific vehicle
+if (isset($_GET['view_comments'])) {
+    $vehicle_no = $_GET['view_comments'];
+    $comments_query = "SELECT c.comment, c.created_at, c.customer_name, c.vehicle_no
+                       FROM comments c
+                       WHERE c.vehicle_no = ?
+                       ORDER BY c.created_at DESC";
+    $stmt = $conn->prepare($comments_query);
+    $stmt->bind_param("s", $vehicle_no);
+    $stmt->execute();
+    $comments_result = $stmt->get_result();
+    $comments = [];
+    while ($row = $comments_result->fetch_assoc()) {
+        $comments[] = $row;
+    }
+    $stmt->close();
+    echo json_encode($comments);
+    exit;
+}
 
 $conn->close();
 ?>
-
 
 <!DOCTYPE html>
 <html lang="en">
@@ -65,16 +127,15 @@ $conn->close();
     <title>Vehicle Maintenance Dashboard</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+       
     <style>
-        body { font-family: Arial, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px; }
-        .dashboard { max-width: 1500px; margin: 0 auto; background: white; padding: 20px; box-shadow: 0 0 10px rgba(0, 0, 0, 0.1); }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .summary-cards { display: flex; justify-content: space-between; }
-        .card { background-color: #000; color: #fff; padding: 20px; text-align: center; border-radius: 8px; flex: 1; margin-right: 10px; width:300px; }
+        body { font-family: Arial, sans-serif; background-color: #f5f5f5; margin: 0; display: flex; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .summary-cards { display: flex; justify-content: space-between;   }
         .card:last-child { margin-right: 0; }
-        .search-bar { display: flex; flex-direction: column; align-items: center; }
-        .search-bar input { padding: 10px; width: 100%; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 10px; }
-        .search-bar button { padding: 10px 20px; background-color: #f0ad4e; color: white; border: none; border-radius: 4px; cursor: pointer; width: 200px; }
+        .search-bar { display: flex; align-items: center; } /* Align items to the center */
+        .search-bar input { padding: 10px; width: auto; border: 1px solid #ccc; border-radius: 4px; margin-right: 10px; }
+        .search-bar button { padding: 10px 20px; background-color: #f0ad4e; color: white; border: none; border-radius: 4px; cursor: pointer; }
         table { width: 100%; border-collapse: collapse; }
         table, th, td { border: 1px solid #ddd; }
         th, td { padding: 15px; text-align: left; }
@@ -83,49 +144,37 @@ $conn->close();
         .pagination { text-align: center; margin-top: 20px; }
         .pagination a { padding: 10px 15px; margin: 0 5px; text-decoration: none; background-color: #f0ad4e; color: white; border-radius: 4px; }
         .pagination a.active { background-color: #5cb85c; }
-        /* .search-bar input {
-    padding: 10px;
-    width: 50%;
-    border: 1px solid #ccc;
-    border-radius: 4px 0 0 4px;
-    margin-right: 0;
-}
-
-.search-bar button {
-    padding: 10px 20px;
-    background-color: #f0ad4e;
-    color: white;
-    border: none;
-    border-radius: 0 4px 4px 0;
-    cursor: pointer;
-}
-  */
-
+        .light-green { background-color: #d4edda; } /* Light green background color */
+        .card { color: #fff;  text-align: center; border-radius: 5px; flex: 1; margin-right: 10px; ; }
+        .bg-black{background-color: black; }
     </style>
 </head>
 <body>
+     <!-- Include the navbar here -->
+  
     <div class="dashboard">
+    <?php include "common/navbar.php"; ?>
         <div class="header">
-            <!-- Date Filter Form -->
-            <div class="search-bar">
+
+        <div class="search-bar">
                 <form method="get" action="">
-                    <input type="date" name="date_filter">
+                    <input type="month" name="date_filter" >
                     <button type="submit">Search</button>
                 </form>
             </div>
-            
             <div class="summary-cards">
-                <div class="card"><p>Total maintenance amount</p><h3><?php echo number_format($summary_data['total_maintenance_amount']); ?></h3></div>
-                <div class="card"><p>No. of vehicles maintained</p><h3><?php echo $summary_data['num_vehicles_maintained']; ?></h3></div>
-                <div class="card"><p>Used stock value</p><h3>Rs. <?php echo number_format($summary_data['used_stock_value']); ?></h3></div>
-                <div class="card"><p>Stock units used</p><h3><?php echo $summary_data['stock_units_used']; ?></h3></div>
+                <div class="card bg-black" style="width: 300px;" ><p>Total maintenance amount</p><h3><?php echo number_format($summary_data['total_maintenance_amount']); ?></h3></div>
+                <div class="card bg-black"style="width: 300px;"><p>No. of vehicles maintained</p><h3><?php echo $summary_data['num_vehicles_maintained']; ?></h3></div>
+                <div class="card bg-black"style="width: 300px;"><p>Used stock value</p><h3>Rs. <?php echo number_format($summary_data['used_stock_value']); ?></h3></div>
+                <div class="card bg-black"style="width: 300px;"><p>Stock units used</p><h3><?php echo $summary_data['stock_units_used']; ?></h3></div>
             </div>
+            
         </div>
-        
+
         <table>
             <thead>
                 <tr>
-                    <th>Vehicle Number</th>
+                <th>Vehicle Number</th>
                     <th>Vehicle Name</th>
                     <th>Last Oil Change Date</th>
                     <th>Days Since Oil Changed</th>
@@ -139,7 +188,7 @@ $conn->close();
                 </tr>
             </thead>
             <tbody>
-            <?php while($row = $maintenance_result->fetch_assoc()): ?>
+                <?php while($row = $maintenance_result->fetch_assoc()): ?>
                 <tr class="<?php echo ($row['days_since_oil_changed'] < 30) ? 'light-green' : ''; ?>">
                     <td><?php echo htmlspecialchars($row['vehicle_no']); ?></td>
                     <td><?php echo htmlspecialchars($row['vehicle_name']); ?></td>
