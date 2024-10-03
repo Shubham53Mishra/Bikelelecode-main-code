@@ -1,40 +1,43 @@
 <?php
-// include "common/link.php";
+// Include the database connection file
 include 'common/connection.php'; 
 
 session_start();
 ob_start();
-$vendor_name="";
-$vendor_email="";
 
+// Initialize variables
+$vendor_name = "";
+$vendor_email = "";
+
+// Check if the session variables are set
 if (!isset($_SESSION['vname'])) {
     header('Location: login.php');
+    exit;
 }
-if(isset($_SESSION['email']))
-{
-    $vendor_email = mysqli_real_escape_string($con,$_SESSION['email']);
-}
-else if(isset($_SESSION['vendor_email']))
-{
-    $vendor_email = mysqli_real_escape_string($con,$_SESSION['vendor_email']);
-}
-else
-{
-    header("location: login.php");
-}
+
+// Set the timezone
 date_default_timezone_set("Asia/Kolkata");
 
+// Database connection details
 $servername = "localhost"; // Replace with your server name
 $username = "root"; // Replace with your username
 $password = ""; // Replace with your password
-$dbname = "view_more";
+$dbname = "bikelele_db";
 
 // Create connection
 $conn = new mysqli($servername, $username, $password, $dbname);
 
+if (isset($_SESSION['email'])) {
+    $vendor_email = mysqli_real_escape_string($conn, $_SESSION['email']);
+} else if (isset($_SESSION['vendor_email'])) {
+    $vendor_email = mysqli_real_escape_string($conn, $_SESSION['vendor_email']);
+} else {
+    header("location: login.php");
+    exit;
+}
+
 // Check connection
 if ($conn->connect_error) {
-    print "Unable to connect sorry unable to load db";
     die("Connection failed: " . $conn->connect_error);
 }
 
@@ -45,6 +48,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_comment'])) {
     $customer_name = $_POST['customer_name'];
 
     $stmt = $conn->prepare("INSERT INTO comments (vehicle_no, comment, customer_name) VALUES (?, ?, ?)");
+    if ($stmt === false) {
+        die('Prepare failed: ' . htmlspecialchars($conn->error));
+    }
     $stmt->bind_param("sss", $vehicle_no, $comment, $customer_name);
     $stmt->execute();
     $stmt->close();
@@ -54,15 +60,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_comment'])) {
     exit;
 }
 
+// Date filter logic
+$date_filter = isset($_GET['date_filter']) ? $_GET['date_filter'] : date('Y-m');
+$start_date = date('Y-m-01', strtotime($date_filter));
+$end_date = date('Y-m-t', strtotime($date_filter));
+
 // Fetch summary data
 $summary_query = "SELECT
                     SUM(item_cost + labour_cost) AS total_maintenance_amount,
                     COUNT(DISTINCT vehicle_no) AS num_vehicles_maintained,
                     SUM(item_cost) AS used_stock_value,
                     SUM(quantity) AS stock_units_used
-                  FROM maintenance_done";
-$summary_result = $conn->query($summary_query);
+                  FROM maintenance_done
+                  WHERE maintenance_date BETWEEN ? AND ?";
+$stmt = $conn->prepare($summary_query);
+$stmt->bind_param("ss", $start_date, $end_date);
+$stmt->execute();
+$summary_result = $stmt->get_result();
 $summary_data = $summary_result->fetch_assoc();
+$stmt->close();
 
 // Fetch maintenance data
 $maintenance_query = "SELECT
@@ -92,20 +108,17 @@ $maintenance_query = "SELECT
                       LEFT JOIN maintenance_done next_change ON md.vehicle_no = next_change.vehicle_no
                         AND next_change.maintenance_date > md.maintenance_date
                       LEFT JOIN trip t ON md.vehicle_no = t.bikes_id
-                      WHERE md.maintenance_date = (
-                          SELECT MAX(maintenance_date)
-                          FROM maintenance_done
-                          WHERE vehicle_no = md.vehicle_no
-                      )
+                      LEFT JOIN bikes_database bd ON bd.bike_id = t.bikes_id
+                      WHERE md.maintenance_date BETWEEN ? AND ?
                       AND t.pickup_date <= CURDATE() 
                       AND t.drop_date >= CURDATE()
                       AND t.admin_status != 'cancelled'
                       GROUP BY md.vehicle_no, md.vname, t.customer_name, t.customer_mobile";
-$maintenance_result = $conn->query($maintenance_query);
- 
-if (!$maintenance_result) {
-    die("Query failed: " . $conn->error);
-}
+$stmt = $conn->prepare($maintenance_query);
+$stmt->bind_param("ss", $start_date, $end_date);
+$stmt->execute();
+$maintenance_result = $stmt->get_result();
+$stmt->close();
 
 // Fetch comments for a specific vehicle
 if (isset($_GET['view_comments'])) {
@@ -115,6 +128,9 @@ if (isset($_GET['view_comments'])) {
                        WHERE c.vehicle_no = ?
                        ORDER BY c.created_at DESC";
     $stmt = $conn->prepare($comments_query);
+    if ($stmt === false) {
+        die('Prepare failed: ' . htmlspecialchars($conn->error));
+    }
     $stmt->bind_param("s", $vehicle_no);
     $stmt->execute();
     $comments_result = $stmt->get_result();
@@ -130,7 +146,7 @@ if (isset($_GET['view_comments'])) {
 $conn->close();
 ?>
 
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -142,7 +158,7 @@ $conn->close();
     <style>
         body { font-family: Arial, sans-serif; background-color: #f5f5f5; margin: 0; display: flex; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        .summary-cards { display: flex; justify-content: space-between;   }
+        .summary-cards { display: flex; justify-content: space-between; padding: 10px;}
         .card:last-child { margin-right: 0; }
         .search-bar { display: flex; align-items: center; } /* Align items to the center */
         .search-bar input { padding: 10px; width: auto; border: 1px solid #ccc; border-radius: 4px; margin-right: 10px; }
@@ -156,7 +172,7 @@ $conn->close();
         .pagination a { padding: 10px 15px; margin: 0 5px; text-decoration: none; background-color: #f0ad4e; color: white; border-radius: 4px; }
         .pagination a.active { background-color: #5cb85c; }
         .light-green { background-color: #d4edda; } /* Light green background color */
-        .card { color: #fff;  text-align: center; border-radius: 5px; flex: 1; margin-right: 10px; ; }
+        .card { color: #fff;  text-align: center; border-radius: 5px; flex: 1; margin-right: 10px; padding: 10px ; }
         .bg-black{background-color: black; }
     </style>
 </head>
@@ -165,10 +181,9 @@ $conn->close();
     <div class="dashboard">
     <?php include "common/navbar.php"; ?>
         <div class="header">
-
-        <div class="search-bar">
+            <div class="search-bar">
                 <form method="get" action="">
-                    <input type="date" name="date_filter">
+                    <input type="month" name="date_filter" value="<?php echo htmlspecialchars($date_filter); ?>">
                     <button type="submit">Search</button>
                 </form>
             </div>
@@ -178,20 +193,18 @@ $conn->close();
                 <div class="card bg-black"style="width: 300px;"><p>Used stock value</p><h3>Rs. <?php echo number_format($summary_data['used_stock_value']); ?></h3></div>
                 <div class="card bg-black"style="width: 300px;"><p>Stock units used</p><h3><?php echo $summary_data['stock_units_used']; ?></h3></div>
             </div>
-            
         </div>
 
         <table>
             <thead>
                 <tr>
-                <th>Vehicle Number</th>
+                    <th>Vehicle Number</th>
                     <th>Vehicle Name</th>
                     <th>Last Oil Change Date</th>
                     <th>Days Since Oil Changed</th>
                     <th>Avg Days Between Oil Changes</th>
                     <th>Recommended Oil Change Date</th>
                     <th>Last Engine Change Date</th>
-                   
                     <th>Customer Name</th>
                     <th>Customer Mobile</th>
                     <th>View</th>
@@ -346,5 +359,7 @@ $conn->close();
             });
         });
     </script>
+      
+    
 </body>
 </html>
