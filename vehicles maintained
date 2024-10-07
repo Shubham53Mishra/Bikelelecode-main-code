@@ -1,44 +1,27 @@
-<?php
-// Include the database connection file
-include 'common/connection.php'; 
-
+ <?php
+// Start session and output buffering
 session_start();
 ob_start();
 
-// Initialize variables
+// Set default timezone
+date_default_timezone_set("Asia/Kolkata");
+
+// Include database connections
+include 'common/connection.php'; // Connection for bikelele_db
+include 'common/connection1.php'; // Connection for view_more
+
+// Initialize vendor information
 $vendor_name = "";
 $vendor_email = "";
 
-// Check if the session variables are set
-if (!isset($_SESSION['vname'])) {
-    header('Location: login.php');
-    exit;
-}
-
-// Set the timezone
-date_default_timezone_set("Asia/Kolkata");
-
-// Database connection details
-$servername = "localhost"; // Replace with your server name
-$username = "root"; // Replace with your username
-$password = ""; // Replace with your password
-$dbname = "bikelele_db";
-
-// Create connection
-$conn = new mysqli($servername, $username, $password, $dbname);
-
+// Check session for email
 if (isset($_SESSION['email'])) {
-    $vendor_email = mysqli_real_escape_string($conn, $_SESSION['email']);
+    $vendor_email = mysqli_real_escape_string($con, $_SESSION['email']);
 } else if (isset($_SESSION['vendor_email'])) {
-    $vendor_email = mysqli_real_escape_string($conn, $_SESSION['vendor_email']);
+    $vendor_email = mysqli_real_escape_string($con, $_SESSION['vendor_email']);
 } else {
     header("location: login.php");
     exit;
-}
-
-// Check connection
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
 }
 
 // Handle form submission for adding comments
@@ -47,9 +30,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_comment'])) {
     $comment = $_POST['comment'];
     $customer_name = $_POST['customer_name'];
 
-    $stmt = $conn->prepare("INSERT INTO comments (vehicle_no, comment, customer_name) VALUES (?, ?, ?)");
+    $stmt = $con->prepare("INSERT INTO comments (vehicle_no, comment, customer_name) VALUES (?, ?, ?)");
     if ($stmt === false) {
-        die('Prepare failed: ' . htmlspecialchars($conn->error));
+        die('Prepare failed: ' . htmlspecialchars($con->error));
     }
     $stmt->bind_param("sss", $vehicle_no, $comment, $customer_name);
     $stmt->execute();
@@ -65,7 +48,7 @@ $date_filter = isset($_GET['date_filter']) ? $_GET['date_filter'] : date('Y-m');
 $start_date = date('Y-m-01', strtotime($date_filter));
 $end_date = date('Y-m-t', strtotime($date_filter));
 
-// Fetch summary data
+// Fetch summary data from view_more database
 $summary_query = "SELECT
                     SUM(item_cost + labour_cost) AS total_maintenance_amount,
                     COUNT(DISTINCT vehicle_no) AS num_vehicles_maintained,
@@ -73,14 +56,14 @@ $summary_query = "SELECT
                     SUM(quantity) AS stock_units_used
                   FROM maintenance_done
                   WHERE maintenance_date BETWEEN ? AND ?";
-$stmt = $conn->prepare($summary_query);
+$stmt = $con1->prepare($summary_query);
 $stmt->bind_param("ss", $start_date, $end_date);
 $stmt->execute();
 $summary_result = $stmt->get_result();
 $summary_data = $summary_result->fetch_assoc();
 $stmt->close();
 
-// Fetch maintenance data
+// Fetch maintenance data from view_more and bikelele_db databases
 $maintenance_query = "SELECT
                         md.vehicle_no,
                         md.vname AS vehicle_name,
@@ -103,18 +86,18 @@ $maintenance_query = "SELECT
                             WHEN se.item_name IN ('Kharad', 'Wall', 'Timing chain', 'Wall seal', 'Half kit', 'Piston 50', 'Piston 100', 'Piston 25', 'Piston 75') THEN md.maintenance_date
                             ELSE NULL
                         END) AS last_engine_change_date
-                      FROM maintenance_done md
-                      JOIN stock_entry se ON md.item_id = se.sku_id
-                      LEFT JOIN maintenance_done next_change ON md.vehicle_no = next_change.vehicle_no
+                      FROM view_more.maintenance_done md
+                      JOIN view_more.stock_entry se ON md.item_id = se.sku_id
+                      LEFT JOIN view_more.maintenance_done next_change ON md.vehicle_no = next_change.vehicle_no
                         AND next_change.maintenance_date > md.maintenance_date
-                      LEFT JOIN trip t ON md.vehicle_no = t.bikes_id
-                      LEFT JOIN bikes_database bd ON bd.bike_id = t.bikes_id
+                      LEFT JOIN bikelele_db.trip t ON md.vehicle_no = t.bikes_id
+                      LEFT JOIN bikelele_db.bikes_database bd ON bd.bike_id = t.bikes_id
                       WHERE md.maintenance_date BETWEEN ? AND ?
                       AND t.pickup_date <= CURDATE() 
                       AND t.drop_date >= CURDATE()
                       AND t.admin_status != 'cancelled'
                       GROUP BY md.vehicle_no, md.vname, t.customer_name, t.customer_mobile";
-$stmt = $conn->prepare($maintenance_query);
+$stmt = $con1->prepare($maintenance_query);
 $stmt->bind_param("ss", $start_date, $end_date);
 $stmt->execute();
 $maintenance_result = $stmt->get_result();
@@ -127,9 +110,9 @@ if (isset($_GET['view_comments'])) {
                        FROM comments c
                        WHERE c.vehicle_no = ?
                        ORDER BY c.created_at DESC";
-    $stmt = $conn->prepare($comments_query);
+    $stmt = $con->prepare($comments_query);
     if ($stmt === false) {
-        die('Prepare failed: ' . htmlspecialchars($conn->error));
+        die('Prepare failed: ' . htmlspecialchars($con->error));
     }
     $stmt->bind_param("s", $vehicle_no);
     $stmt->execute();
@@ -143,10 +126,10 @@ if (isset($_GET['view_comments'])) {
     exit;
 }
 
-$conn->close();
+$con->close();
+$con1->close();
 ?>
-
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -160,7 +143,7 @@ $conn->close();
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
         .summary-cards { display: flex; justify-content: space-between; padding: 10px;}
         .card:last-child { margin-right: 0; }
-        .search-bar { display: flex; align-items: center; } /* Align items to the center */
+        .search-bar { display: flex; align-items: center; }
         .search-bar input { padding: 10px; width: auto; border: 1px solid #ccc; border-radius: 4px; margin-right: 10px; }
         .search-bar button { padding: 10px 20px; background-color: #f0ad4e; color: white; border: none; border-radius: 4px; cursor: pointer; }
         table { width: 100%; border-collapse: collapse; }
@@ -171,15 +154,15 @@ $conn->close();
         .pagination { text-align: center; margin-top: 20px; }
         .pagination a { padding: 10px 15px; margin: 0 5px; text-decoration: none; background-color: #f0ad4e; color: white; border-radius: 4px; }
         .pagination a.active { background-color: #5cb85c; }
-        .light-green { background-color: #d4edda; } /* Light green background color */
-        .card { color: #fff;  text-align: center; border-radius: 5px; flex: 1; margin-right: 10px; padding: 10px ; }
-        .bg-black{background-color: black; }
+        .light-green { background-color: #d4edda; }
+        .card { color: #fff; text-align: center; border-radius: 5px; flex: 1; margin-right: 10px; padding: 10px; }
+        .bg-black { background-color: black; }
     </style>
 </head>
 <body>
     
     <div class="dashboard">
-    <?php include "common/navbar.php"; ?>
+        <?php include "common/navbar.php"; ?>
         <div class="header">
             <div class="search-bar">
                 <form method="get" action="">
@@ -188,10 +171,10 @@ $conn->close();
                 </form>
             </div>
             <div class="summary-cards">
-                <div class="card bg-black" style="width: 300px;" ><p>Total maintenance amount</p><h3><?php echo number_format($summary_data['total_maintenance_amount']); ?></h3></div>
-                <div class="card bg-black"style="width: 300px;"><p>No. of vehicles maintained</p><h3><?php echo $summary_data['num_vehicles_maintained']; ?></h3></div>
-                <div class="card bg-black"style="width: 300px;"><p>Used stock value</p><h3>Rs. <?php echo number_format($summary_data['used_stock_value']); ?></h3></div>
-                <div class="card bg-black"style="width: 300px;"><p>Stock units used</p><h3><?php echo $summary_data['stock_units_used']; ?></h3></div>
+                <div class="card bg-black" style="width: 300px;"><p>Total maintenance amount</p><h3><?php echo number_format($summary_data['total_maintenance_amount']); ?></h3></div>
+                <div class="card bg-black" style="width: 300px;"><p>No. of vehicles maintained</p><h3><?php echo $summary_data['num_vehicles_maintained']; ?></h3></div>
+                <div class="card bg-black" style="width: 300px;"><p>Used stock value</p><h3>Rs. <?php echo number_format($summary_data['used_stock_value']); ?></h3></div>
+                <div class="card bg-black" style="width: 300px;"><p>Stock units used</p><h3><?php echo $summary_data['stock_units_used']; ?></h3></div>
             </div>
         </div>
 
@@ -212,7 +195,7 @@ $conn->close();
                 </tr>
             </thead>
             <tbody>
-                <?php while($row = $maintenance_result->fetch_assoc()): ?>
+                <?php while ($row = $maintenance_result->fetch_assoc()): ?>
                 <tr class="<?php echo ($row['days_since_oil_changed'] < 30) ? 'light-green' : ''; ?>">
                     <td><?php echo htmlspecialchars($row['vehicle_no']); ?></td>
                     <td><?php echo htmlspecialchars($row['vehicle_name']); ?></td>
@@ -249,7 +232,6 @@ $conn->close();
             <a href="?page=1" class="active">1</a>
             <a href="?page=2">2</a>
             <a href="?page=3">3</a>
-            <!-- Add more page links as needed -->
             <a href="?page=2">Next &raquo;</a>
         </div>
     </div>
@@ -360,6 +342,5 @@ $conn->close();
         });
     </script>
       
-    
 </body>
 </html>
